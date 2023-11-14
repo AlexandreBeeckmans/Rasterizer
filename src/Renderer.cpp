@@ -25,11 +25,15 @@ Renderer::Renderer(SDL_Window* pWindow) :
 
 	//Initialize Camera
 	m_Camera.Initialize(60.f, { .0f,.0f,-10.f });
+
+	//InitTexture
+	m_pTexture = Texture::LoadFromFile("Resources/uv_grid_2.png");
 }
 
 Renderer::~Renderer()
 {
 	//delete[] m_pDepthBufferPixels;
+	delete m_pTexture;
 }
 
 void Renderer::Update(Timer* pTimer)
@@ -49,8 +53,9 @@ void Renderer::Render()
 	//Render_W1_Part3();
 	/*Render_W1_Part4();*/
 	//Render_W1_Part5();
-	Render_W2_Part1();
+	//Render_W2_Part1();
 	//Render_W2_Part2();
+	Render_W2_Part3();
 
 	//@END
 	//Update SDL Surface
@@ -79,6 +84,7 @@ void Renderer::VertexTransformationFunction(const std::vector<Vertex>& vertices_
 		viewVertex.position.y = projectedY;
 
 		viewVertex.color = v.color;
+		viewVertex.uv = v.uv;
 		vertices_out.push_back(viewVertex);
 	}
 }
@@ -178,9 +184,16 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& triangles) const
 					{
 						depthBufferPixels[pixelNr] = barycentrics.z;
 
-						finalColor = barycentrics.x * triangles[triangleNr].color;
+						//W01 --> no texture(with color)
+						/*finalColor = barycentrics.x * triangles[triangleNr].color;
 						finalColor += barycentrics.y * triangles[triangleNr + 1].color;
-						finalColor += barycentrics.z * triangles[triangleNr + 2].color;
+						finalColor += barycentrics.z * triangles[triangleNr + 2].color;*/
+
+
+						Vector2 finalUV = barycentrics.x * triangles[triangleNr].uv;
+						finalUV += barycentrics.y * triangles[triangleNr + 1].uv;
+						finalUV += barycentrics.z * triangles[triangleNr + 2].uv;
+						finalColor = m_pTexture->Sample(finalUV);
 
 						//Update Color in Buffer
 						finalColor.MaxToOne();
@@ -456,6 +469,41 @@ void Renderer::Render_W2_Part2() const
 	};
 
 	std::vector<Vertex> vetrices_world{MeshToVetrices(meshesWorld[0])};
+	std::vector<Vertex> vetrices_NDC{};
+
+	VertexTransformationFunction(vetrices_world, vetrices_NDC);
+	RasterizeTriangle(vetrices_NDC);
+}
+void Renderer::Render_W2_Part3() const
+{
+	//Define Triangle List
+	std::vector<Mesh> meshesWorld
+	{
+		Mesh
+		{
+			{
+				Vertex{ { -3, 3, -2 },	{1,1,1},	{0,0} },
+				Vertex{ { 0, 3, -2 },	{1,1,1},	{0.5f,0} },
+				Vertex{ { 3, 3, -2 },	{1,1,1},	{1,0} },
+				Vertex{ { -3, 0, -2 },	{1,1,1},	{0,0.5f} },
+				Vertex{ { 0, 0, -2 },	{1,1,1},	{0.5f,0.5f} },
+				Vertex{ { 3, 0, -2 },	{1,1,1},	{1,0.5f} },
+				Vertex{ { -3, -3, -2 },	{1,1,1},	{0,1} },
+				Vertex{ { 0, -3, -2 },	{1,1,1},	{0.5f,1} },
+				Vertex{ { 3, -3, -2 },	{1,1,1},	{1,1} },
+			},
+
+			{
+				3,0,4,1,5,2,
+				2,6,
+				6,3,7,4,8,5
+			},
+
+			PrimitiveTopology::TriangleStrip
+		}
+	};
+
+	std::vector<Vertex> vetrices_world{ MeshToVetrices(meshesWorld[0]) };
 	std::vector<Vertex> vetrices_NDC{};
 
 	VertexTransformationFunction(vetrices_world, vetrices_NDC);

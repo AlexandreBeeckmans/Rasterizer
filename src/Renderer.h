@@ -45,6 +45,8 @@ namespace dae
 
 		dae::Camera m_Camera{ {0,0,-10}, 60 };
 
+		Texture* m_pTexture;
+
 		int m_Width{};
 		int m_Height{};
 
@@ -62,5 +64,6 @@ namespace dae
 		void Render_W1_Part5() const;
 		void Render_W2_Part1() const; //TriangleList
 		void Render_W2_Part2() const; //TriangleStrip
+		void Render_W2_Part3() const; //UV
 	};
 }
