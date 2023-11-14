@@ -48,9 +48,9 @@ void Renderer::Render()
 	//Render_W1_Part2();
 	//Render_W1_Part3();
 	/*Render_W1_Part4();*/
-	Render_W1_Part5();
-
-
+	//Render_W1_Part5();
+	Render_W2_Part1();
+	//Render_W2_Part2();
 
 	//@END
 	//Update SDL Surface
@@ -68,19 +68,15 @@ void Renderer::VertexTransformationFunction(const std::vector<Vertex>& vertices_
 		const Vector3 cameraToVertex{ m_Camera.origin, v.position };
 
 		Vertex viewVertex{ m_Camera.viewMatrix.TransformPoint(v.position)};
-		viewVertex.position.z = cameraToVertex.Magnitude();
 
-		if (viewVertex.position.z > 0)
-		{
-			float projectedX{ viewVertex.position.x / (viewVertex.position.z) };
-			float projectedY{ viewVertex.position.y / (viewVertex.position.z) };
+		float projectedX{ viewVertex.position.x / (viewVertex.position.z) };
+		float projectedY{ viewVertex.position.y / (viewVertex.position.z) };
 
-			projectedX /= (m_Camera.fov * aspectRatio);
-			projectedY /= m_Camera.fov;
+		projectedX /= (m_Camera.fov * aspectRatio);
+		projectedY /= m_Camera.fov;
 
-			viewVertex.position.x = projectedX;
-			viewVertex.position.y = projectedY;
-		}
+		viewVertex.position.x = projectedX;
+		viewVertex.position.y = projectedY;
 
 		viewVertex.color = v.color;
 		vertices_out.push_back(viewVertex);
@@ -132,7 +128,6 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& triangles) const
 		m_pBackBufferPixels[i] = 0;
 	}
 
-
 	//Convert to ScreenSpace
 	for (const Vertex& v : triangles)
 	{
@@ -159,8 +154,6 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& triangles) const
 		bottomRight = ToScreenSpace(bottomRight.x, bottomRight.y);
 
 
-
-
 		//RENDER LOGIC
 		for (int px{int(topLeft.x)}; px < bottomRight.x; ++px)
 		{
@@ -172,7 +165,7 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& triangles) const
 					py + 0.5f
 				};
 				const int pixelNr{ px + m_Width * py };
-				ColorRGB finalColor{ m_pBackBufferPixels[pixelNr]};
+				ColorRGB finalColor{};
 				Vector3 barycentrics{};
 				if (HitTest_Triangle(vetrices_screenSpace, pixel, barycentrics, triangleNr))
 				{
@@ -188,15 +181,17 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& triangles) const
 						finalColor = barycentrics.x * triangles[triangleNr].color;
 						finalColor += barycentrics.y * triangles[triangleNr + 1].color;
 						finalColor += barycentrics.z * triangles[triangleNr + 2].color;
+
+						//Update Color in Buffer
+						finalColor.MaxToOne();
+
+						m_pBackBufferPixels[pixelNr] = SDL_MapRGB(m_pBackBuffer->format,
+							static_cast<uint8_t>(finalColor.r * 255),
+							static_cast<uint8_t>(finalColor.g * 255),
+							static_cast<uint8_t>(finalColor.b * 255));
 					}
 				}
-				//Update Color in Buffer
-				finalColor.MaxToOne();
 
-				m_pBackBufferPixels[px + (py * m_Width)] = SDL_MapRGB(m_pBackBuffer->format,
-					static_cast<uint8_t>(finalColor.r * 255),
-					static_cast<uint8_t>(finalColor.g * 255),
-					static_cast<uint8_t>(finalColor.b * 255));
 			}
 		}
 		
@@ -234,6 +229,33 @@ void Renderer::ClampToNDC(Vector2& point) const
 		point.y = -1;
 	}
 }
+std::vector<Vertex> Renderer::MeshToVetrices(const Mesh& mesh) const
+{
+	int incrementIndex{1};
+	size_t maxSize{ mesh.indices.size() };
+
+	switch (mesh.primitiveTopology)
+	{
+		case PrimitiveTopology::TriangleList:
+			incrementIndex = 3;
+			break;
+		case PrimitiveTopology::TriangleStrip:
+			maxSize -= 2;
+			break;
+	}
+
+	std::vector<Vertex> vectorToFill{};
+	for (int currentIndice{ 0 }; currentIndice < maxSize; currentIndice += incrementIndex)
+	{
+
+		vectorToFill.push_back(mesh.vertices[mesh.indices[currentIndice]]);
+		vectorToFill.push_back(mesh.vertices[mesh.indices[currentIndice + 1]]);
+		vectorToFill.push_back(mesh.vertices[mesh.indices[currentIndice + 2]]);
+
+	}
+
+	return vectorToFill;
+}
 
 
 
@@ -266,12 +288,6 @@ void Renderer::Render_W1_Part1() const
 	{
 		for (int py{}; py < m_Height; ++py)
 		{
-			/*float gradient = px / static_cast<float>(m_Width);
-			gradient += py / static_cast<float>(m_Width);
-			gradient /= 2.0f;
-
-			ColorRGB finalColor{ gradient, gradient, gradient };*/
-
 			const Vector2 pixel
 			{
 				px + 0.5f,
@@ -372,5 +388,76 @@ void Renderer::Render_W1_Part5() const
 
 	VertexTransformationFunction(vetrices_world, vetrices_NDC);
 
+	RasterizeTriangle(vetrices_NDC);
+}
+void Renderer::Render_W2_Part1() const
+{
+	//Define Triangle List
+	std::vector<Mesh> meshesWorld
+	{
+		Mesh
+		{
+			{
+				Vertex{ { -3, 3, -2 },	{1,1,1} },
+				Vertex{ { 0, 3, -2 },	{1,1,1} },
+				Vertex{ { 3, 3, -2 },	{1,1,1} },
+				Vertex{ { -3, 0, -2 },	{1,1,1} },
+				Vertex{ { 0, 0, -2 },	{1,1,1} },
+				Vertex{ { 3, 0, -2 },	{1,1,1} },
+				Vertex{ { -3, -3, -2 },	{1,1,1} },
+				Vertex{ { 0, -3, -2 },	{1,1,1} },
+				Vertex{ { 3, -3, -2 },	{1,1,1} },
+			},
+
+			{
+				3,0,1,	1,4,3,	4,1,2,
+				2,5,4,	6,3,4,	4,7,6,
+				7,4,5,	5,8,7
+			},
+
+			PrimitiveTopology::TriangleList
+		}
+
+	};
+
+	std::vector<Vertex> vetrices_world{MeshToVetrices(meshesWorld[0])};
+	std::vector<Vertex> vetrices_NDC{};
+
+	VertexTransformationFunction(vetrices_world, vetrices_NDC);
+	RasterizeTriangle(vetrices_NDC);
+}
+void Renderer::Render_W2_Part2() const
+{
+	//Define Triangle List
+	std::vector<Mesh> meshesWorld
+	{
+		Mesh
+		{
+			{
+				Vertex{ { -3, 3, -2 },	{1,1,1} },
+				Vertex{ { 0, 3, -2 },	{1,1,1} },
+				Vertex{ { 3, 3, -2 },	{1,1,1} },
+				Vertex{ { -3, 0, -2 },	{1,1,1} },
+				Vertex{ { 0, 0, -2 },	{1,1,1} },
+				Vertex{ { 3, 0, -2 },	{1,1,1} },
+				Vertex{ { -3, -3, -2 },	{1,1,1} },
+				Vertex{ { 0, -3, -2 },	{1,1,1} },
+				Vertex{ { 3, -3, -2 },	{1,1,1} },
+			},
+
+			{
+				3,0,4,1,5,2,
+				2,6,
+				6,3,7,4,8,5
+			},
+
+			PrimitiveTopology::TriangleStrip
+		}
+	};
+
+	std::vector<Vertex> vetrices_world{MeshToVetrices(meshesWorld[0])};
+	std::vector<Vertex> vetrices_NDC{};
+
+	VertexTransformationFunction(vetrices_world, vetrices_NDC);
 	RasterizeTriangle(vetrices_NDC);
 }

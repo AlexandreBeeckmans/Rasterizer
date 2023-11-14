@@ -52,6 +52,7 @@ namespace dae
 		void RasterizeTriangle(const std::vector<Vertex>& triangle) const;
 		Vector2 ToScreenSpace(const float x, const float y) const;
 		void ClampToNDC(Vector2& point) const;
+		std::vector<Vertex> MeshToVetrices(const Mesh& mesh) const;
 
 
 		void Render_W1_Part1() const;
@@ -59,5 +60,7 @@ namespace dae
 		void Render_W1_Part3() const;
 		void Render_W1_Part4() const;
 		void Render_W1_Part5() const;
+		void Render_W2_Part1() const; //TriangleList
+		void Render_W2_Part2() const; //TriangleStrip
 	};
 }
