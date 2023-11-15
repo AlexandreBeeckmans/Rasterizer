@@ -179,10 +179,24 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& triangles) const
 					float depth{ barycentrics.x * triangles[triangleNr].position.z };
 					depth += barycentrics.y * triangles[triangleNr + 1].position.z;
 					depth += barycentrics.z * triangles[triangleNr + 2].position.z;
+
+					float depth{ barycentrics.x * triangles[triangleNr].position.z };
+					depth += barycentrics.y * triangles[triangleNr + 1].position.z;
+					depth += barycentrics.z * triangles[triangleNr + 2].position.z;
+
+					//Corrected Depth interpolation
+					const float w0{ 1 / triangles[triangleNr].position.z + barycentrics.x };
+					const float w1{ 1 / triangles[triangleNr + 1].position.z + barycentrics.y };
+					const float w2{ 1 / triangles[triangleNr + 2].position.z + barycentrics.z };
+
+					float zInterpolated{ 1 / (w0 + w1 + w2) };
+
+
 					
-					if (depth < depthBufferPixels[pixelNr])
+					if (zInterpolated < depthBufferPixels[pixelNr])
 					{
-						depthBufferPixels[pixelNr] = barycentrics.z;
+						//depthBufferPixels[pixelNr] = barycentrics.z;
+						depthBufferPixels[pixelNr] = zInterpolated;
 
 						//W01 --> no texture(with color)
 						/*finalColor = barycentrics.x * triangles[triangleNr].color;
@@ -190,10 +204,20 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& triangles) const
 						finalColor += barycentrics.z * triangles[triangleNr + 2].color;*/
 
 
+
+
 						Vector2 finalUV = barycentrics.x * triangles[triangleNr].uv;
 						finalUV += barycentrics.y * triangles[triangleNr + 1].uv;
 						finalUV += barycentrics.z * triangles[triangleNr + 2].uv;
-						finalColor = m_pTexture->Sample(finalUV);
+
+						//correctedUV
+						const Vector2 uv0{ barycentrics.x * (triangles[triangleNr].uv / triangles[triangleNr].position.z) };
+						const Vector2 uv1{ barycentrics.y * (triangles[triangleNr + 1].uv / triangles[triangleNr + 1].position.z) };
+						const Vector2 uv2{ barycentrics.z * (triangles[triangleNr + 2].uv / triangles[triangleNr + 2].position.z) };
+						const Vector2 interpolatedUV{ (uv0 + uv1 + uv2) * zInterpolated };
+
+						//finalColor = m_pTexture->Sample(finalUV);
+						finalColor = m_pTexture->Sample(interpolatedUV);
 
 						//Update Color in Buffer
 						finalColor.MaxToOne();
