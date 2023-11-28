@@ -33,6 +33,7 @@ namespace dae
 		bool SaveBufferToImage() const;
 
 		void VertexTransformationFunction(const std::vector<Vertex>& vertices_in, std::vector<Vertex>& vertices_out) const;
+		void VertexTransformationFunction(Mesh& mesh) const;
 
 	private:
 		SDL_Window* m_pWindow{};
@@ -40,10 +41,9 @@ namespace dae
 		SDL_Surface* m_pFrontBuffer{ nullptr };
 		SDL_Surface* m_pBackBuffer{ nullptr };
 		uint32_t* m_pBackBufferPixels{};
-
 		//float* m_pDepthBufferPixels{};
 
-		dae::Camera m_Camera{ {0,0,-10}, 60 };
+		Camera m_Camera{ {0,0,-10}, 60 };
 
 		Texture* m_pTexture;
 
@@ -51,6 +51,8 @@ namespace dae
 		int m_Height{};
 
 		bool HitTest_Triangle(const std::vector<Vector2>& triangle, const Vector2& pixel, Vector3& barycentricWeights, const int triangleNr) const;
+		bool HitTest_Triangle(const Vector2& v0, const Vector2& v1, const Vector2& v2, const Vector2& pixel, Vector3& barycentricWeights) const;
+
 		void RasterizeTriangle(const std::vector<Vertex>& triangle) const;
 		Vector2 ToScreenSpace(const float x, const float y) const;
 		void ClampToNDC(Vector2& point) const;
@@ -65,5 +67,8 @@ namespace dae
 		void Render_W2_Part1() const; //TriangleList
 		void Render_W2_Part2() const; //TriangleStrip
 		void Render_W2_Part3() const; //UV
+		
+		void Render_W3_Part1() const; // Projection Matrix
+		void Render_W3_Part2()const;
 	};
 }
