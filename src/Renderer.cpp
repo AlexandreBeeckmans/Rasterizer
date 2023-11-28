@@ -33,7 +33,6 @@ Renderer::Renderer(SDL_Window* pWindow) :
 	//InitTexture
 	//m_pTexture = Texture::LoadFromFile("Resources/uv_grid_2.png");
 	m_pTexture = Texture::LoadFromFile("Resources/tuktuk.png");
-
 }
 
 Renderer::~Renderer()
@@ -44,6 +43,8 @@ Renderer::~Renderer()
 void Renderer::Update(Timer* pTimer)
 {
 	m_Camera.Update(pTimer);
+
+	m_MeshRotationAngle += m_MeshRotationSpeed * pTimer->GetElapsed();
 }
 
 void Renderer::Render()
@@ -72,29 +73,23 @@ void Renderer::Render()
 }
 
 
-void Renderer::VertexTransformationFunction(Mesh& mesh) const
+void Renderer::VertexTransformationFunction(std::vector<Mesh>& meshVector) const
 {
-
-	const float aspectRatio{ m_Width / static_cast<float>(m_Height) };
-	/*const Matrix projectionMatrix
+	for (Mesh& mesh : meshVector)
 	{
-		Vector4{1 / (aspectRatio * m_Camera.fov),0,0,0},
-		Vector4{0,1 / m_Camera.fov,0,0},
-		Vector4{0,0,m_Camera.far / (m_Camera.far - m_Camera.near),1},
-		Vector4{0,0,-(m_Camera.far * m_Camera.near) / (m_Camera.far - m_Camera.near),0},
-	};*/
-	const Matrix worldViewProjectionMatrix{ m_Camera.viewMatrix * m_Camera.projectionMatrix };
+		const Matrix worldViewProjectionMatrix{ mesh.worldMatrix * m_Camera.viewMatrix * m_Camera.projectionMatrix };
+		for (const Vertex& vertex : mesh.vertices)
+		{
 
-	for (const Vertex& vertex : mesh.vertices)
-	{
-		
-		Vector4 newPos{ worldViewProjectionMatrix.TransformPoint(vertex.position.ToVector4()) };
-		newPos.x /= newPos.w;
-		newPos.y /= newPos.w;
-		newPos.z /= newPos.w;
-		Vertex_Out newVertex{ newPos, vertex.color, vertex.uv };
-		mesh.vertices_out.emplace_back(newVertex);
+			Vector4 newPos{ worldViewProjectionMatrix.TransformPoint(vertex.position.ToVector4()) };
+			newPos.x /= newPos.w;
+			newPos.y /= newPos.w;
+			newPos.z /= newPos.w;
+			Vertex_Out newVertex{ newPos, vertex.color, vertex.uv };
+			mesh.vertices_out.emplace_back(newVertex);
+		}
 	}
+
 }
 
 
@@ -122,6 +117,10 @@ void Renderer::VertexTransformationFunction(const std::vector<Vertex>& vertices_
 		viewVertex.uv = v.uv;
 		vertices_out.push_back(viewVertex);
 	}
+}
+void Renderer::ToggleDisplayZBuffer()
+{
+	m_DisplayZBuffer = !m_DisplayZBuffer;
 }
 
 bool Renderer::SaveBufferToImage() const
@@ -179,6 +178,8 @@ bool Renderer::HitTest_Triangle(const Vector2& vertex0, const Vector2& vertex1, 
 	if ((c1 >= 0 && c2 >= 0 && c0 >= 0) || (c1 <= 0 && c2 <= 0 && c0 <= 0))
 	{
 		const float triangleArea{ Vector2::Cross(s2, s0) };
+		if (triangleArea == 0) return false;
+
 
 		barycentricWeights.x = c0 / triangleArea;
 		barycentricWeights.y = c1 / triangleArea;
@@ -278,6 +279,164 @@ void Renderer::RasterizeTriangle(const std::vector<Vertex>& vertices) const
 
 	delete[] depthBufferPixels;
 }
+void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const Vector4& v1, const Vector4& v2, const Mesh& mesh, const int index)
+{
+	const int pixelNr{ px + (m_Width * py) };
+	const Vector2 pixel
+	{
+		px + 0.5f,
+		py + 0.5f
+	};
+
+	ColorRGB finalColor{};
+	Vector3 barycentrics{};
+	if (HitTest_Triangle({ v0.x, v0.y }, { v1.x, v1.y }, { v2.x, v2.y }, pixel, barycentrics))
+	{
+
+		//Corrected Depth interpolation
+		const float z0{ barycentrics.x / v0.z };
+		const float z1{ barycentrics.y / v1.z };
+		const float z2{ barycentrics.z / v2.z };
+
+		float zBufferValue{ 1 / (z0 + z1 + z2) };
+
+		if (zBufferValue < 0 || zBufferValue > 1 || zBufferValue >= m_pDepthBufferPixels[pixelNr]) return;
+
+		m_pDepthBufferPixels[pixelNr] = zBufferValue;
+
+		const float w0{ barycentrics.x / v0.w };
+		const float w1{ barycentrics.y / v1.w };
+		const float w2{ barycentrics.z / v2.w };
+
+		const float wInterpolated{ 1 / (w0 + w1 + w2) };
+
+		//correctedUV
+		const Vector2 uv0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].uv / v0.w) };
+		const Vector2 uv1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].uv / v1.w) };
+		const Vector2 uv2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].uv / v2.w) };
+		const Vector2 interpolatedUV{ (uv0 + uv1 + uv2) * wInterpolated };
+
+		if (interpolatedUV.x < 0 || interpolatedUV.x > 1 || interpolatedUV.y < 0 || interpolatedUV.y > 1) return;
+
+		if (!m_DisplayZBuffer)
+		{
+			finalColor = m_pTexture->Sample(interpolatedUV);
+		}
+		else
+		{
+			const float mappedValue{ Remap(zBufferValue,0.8f, 1.0f) };
+			finalColor = { mappedValue, mappedValue, mappedValue };
+		}
+		
+
+
+		//Update Color in Buffer
+		finalColor.MaxToOne();
+
+		m_pBackBufferPixels[pixelNr] = SDL_MapRGB(m_pBackBuffer->format,
+			static_cast<uint8_t>(finalColor.r * 255),
+			static_cast<uint8_t>(finalColor.g * 255),
+			static_cast<uint8_t>(finalColor.b * 255));
+	}
+}
+void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
+{
+	VertexTransformationFunction(meshesWorld);
+
+	for (const Mesh& mesh : meshesWorld)
+	{
+
+		//Rasterize logic
+		std::vector<Vector2> vetrices_screenSpace{};
+		m_pDepthBufferPixels = new float[m_Width * m_Height];
+
+		for (int i{ 0 }; i < m_Width * m_Height; ++i)
+		{
+			m_pDepthBufferPixels[i] = FLT_MAX;
+			m_pBackBufferPixels[i] = 0;
+		}
+
+		//Convert to ScreenSpace
+		for (const Vertex_Out& v : mesh.vertices_out)
+		{
+			vetrices_screenSpace.push_back(ToScreenSpace(v.position.x, v.position.y));
+		}
+
+
+
+		int incrementIndex{ 1 };
+		size_t maxSize{ mesh.indices.size() };
+
+		switch (mesh.primitiveTopology)
+		{
+		case PrimitiveTopology::TriangleList:
+			incrementIndex = 3;
+			break;
+		case PrimitiveTopology::TriangleStrip:
+			maxSize -= 2;
+			break;
+		}
+
+		//for (int triangleNr{ 0 }; triangleNr < meshesWorld[0].vertices_out.size(); triangleNr += 3)
+		for (int index{ 0 }; index < maxSize; index += incrementIndex)
+		{
+			const Vector4 v0
+			{
+				vetrices_screenSpace[mesh.indices[index]].x,
+				vetrices_screenSpace[mesh.indices[index]].y,
+				mesh.vertices_out[mesh.indices[index]].position.z,
+				mesh.vertices_out[mesh.indices[index]].position.w
+			};
+
+			const Vector4 v1
+			{
+				vetrices_screenSpace[mesh.indices[index + 1]].x,
+				vetrices_screenSpace[mesh.indices[index + 1]].y,
+				mesh.vertices_out[mesh.indices[index + 1]].position.z,
+				mesh.vertices_out[mesh.indices[index + 1]].position.w
+			};
+
+			const Vector4 v2
+			{
+				vetrices_screenSpace[mesh.indices[index + 2]].x,
+				vetrices_screenSpace[mesh.indices[index + 2]].y,
+				mesh.vertices_out[mesh.indices[index + 2]].position.z,
+				mesh.vertices_out[mesh.indices[index + 2]].position.w
+			};
+
+
+
+			//Define triangle bounding box
+			Vector2 topLeft
+			{
+				std::min<float>(v0.x, std::min(v1.x, v2.x)),
+				std::max<float>(v0.y, std::max(v1.y, v2.y))
+			};
+
+			Vector2 bottomRight
+			{
+				std::max<float>(v0.x, std::max(v1.x, v2.x)),
+				std::min<float>(v0.y, std::min(v1.y, v2.y))
+			};
+
+
+			if ((topLeft.x < 0 || bottomRight.x > m_Width - 1) || (bottomRight.y < 0 || topLeft.y > m_Height - 1)) continue;
+
+
+
+			//RENDER LOGIC
+			for (int px{ static_cast<int>(topLeft.x) }; px < static_cast<int>(bottomRight.x); ++px)
+			{
+				for (int py{ static_cast<int>(bottomRight.y) }; py < static_cast<int>(topLeft.y); ++py)
+				{
+					RenderAPixel(px, py, v0, v1, v2, mesh, index);
+				}
+			}
+		}
+		delete[] m_pDepthBufferPixels;
+		m_pDepthBufferPixels = nullptr;
+	}
+}
 
 Vector2 Renderer::ToScreenSpace(const float x, const float y) const
 {
@@ -331,6 +490,18 @@ std::vector<Vertex> Renderer::MeshToVetrices(const Mesh& mesh) const
 		vectorToFill.push_back(mesh.vertices[mesh.indices[currentIndice + 2]]);
 	}
 	return vectorToFill;
+}
+float Renderer::Remap(const float value, const float min, const float max) const
+{
+	if (max <= min || value > max || value < min) return 0;
+
+
+	const float difference{ max - min };
+	const float valueDistance{ value - min };
+	const float differenceProportion{ valueDistance / difference };
+
+	return differenceProportion;
+
 }
 
 
@@ -490,7 +661,6 @@ void Renderer::Render_W2_Part1() const
 
 			PrimitiveTopology::TriangleList
 		}
-
 	};
 
 	std::vector<Vertex> vetrices_world{MeshToVetrices(meshesWorld[0])};
@@ -570,12 +740,11 @@ void Renderer::Render_W2_Part3() const
 	RasterizeTriangle(vetrices_NDC);
 }
 
-void Renderer::Render_W3_Part1() const
+void Renderer::Render_W3_Part1()
 {
 	//Define Triangle List
 	std::vector<Mesh> meshesWorld
-	{
-		Mesh
+	{	Mesh
 		{
 			{
 				Vertex{ { -3, 3, -2 },	{1,1,1},	{0,0} },
@@ -599,307 +768,25 @@ void Renderer::Render_W3_Part1() const
 		}
 	};
 
-	for (Mesh& mesh : meshesWorld)
-	{
-		VertexTransformationFunction(mesh);
-		//Rasterize logic
-		std::vector<Vector2> vetrices_screenSpace{};
-		float* depthBufferPixels{ new float[m_Width * m_Height] };
-
-		for (int i{ 0 }; i < m_Width * m_Height; ++i)
-		{
-			depthBufferPixels[i] = FLT_MAX;
-			m_pBackBufferPixels[i] = 0;
-		}
-
-		//Convert to ScreenSpace
-		for (const Vertex_Out& v : mesh.vertices_out)
-		{
-			vetrices_screenSpace.push_back(ToScreenSpace(v.position.x, v.position.y));
-		}
-
-
-
-		int incrementIndex{ 1 };
-		size_t maxSize{ mesh.indices.size() };
-
-		switch (mesh.primitiveTopology)
-		{
-		case PrimitiveTopology::TriangleList:
-			incrementIndex = 3;
-			break;
-		case PrimitiveTopology::TriangleStrip:
-			maxSize -= 2;
-			break;
-		}
-
-		//for (int triangleNr{ 0 }; triangleNr < meshesWorld[0].vertices_out.size(); triangleNr += 3)
-		for (int index{ 0 }; index < maxSize; index += incrementIndex)
-		{
-			const Vector4 v0
-			{
-				vetrices_screenSpace[mesh.indices[index]].x,
-				vetrices_screenSpace[mesh.indices[index]].y,
-				mesh.vertices_out[mesh.indices[index]].position.z,
-				mesh.vertices_out[mesh.indices[index]].position.w
-			};
-
-			const Vector4 v1
-			{
-				vetrices_screenSpace[mesh.indices[index + 1]].x,
-				vetrices_screenSpace[mesh.indices[index + 1]].y,
-				mesh.vertices_out[mesh.indices[index + 1]].position.z,
-				mesh.vertices_out[mesh.indices[index + 1]].position.w
-			};
-
-			const Vector4 v2
-			{
-				vetrices_screenSpace[mesh.indices[index + 2]].x,
-				vetrices_screenSpace[mesh.indices[index + 2]].y,
-				mesh.vertices_out[mesh.indices[index + 2]].position.z,
-				mesh.vertices_out[mesh.indices[index + 2]].position.w
-			};
-
-
-
-			//Define triangle bounding box
-			Vector2 topLeft
-			{
-				std::min<float>(v0.x, std::min(v1.x, v2.x)),
-				std::max<float>(v0.y, std::max(v1.y, v2.y))
-			};
-
-			Vector2 bottomRight
-			{
-				std::max<float>(v0.x, std::max(v1.x, v2.x)),
-				std::min<float>(v0.y, std::min(v1.y, v2.y))
-			};
-
-
-			if ((topLeft.x < 0 || bottomRight.x > m_Width - 1) || (bottomRight.y < 0 || topLeft.y > m_Height - 1)) continue;
-
-
-
-			//RENDER LOGIC
-			for (int px{ static_cast<int>(topLeft.x) }; px < static_cast<int>(bottomRight.x); ++px)
-			{
-				for (int py{ static_cast<int>(bottomRight.y) }; py < static_cast<int>(topLeft.y); ++py)
-				{
-
-					const int pixelNr{ px + (m_Width * py) };
-					const Vector2 pixel
-					{
-						px + 0.5f,
-						py + 0.5f
-					};
-				
-					ColorRGB finalColor{};
-					Vector3 barycentrics{};
-					if (HitTest_Triangle({ v0.x, v0.y }, { v1.x, v1.y }, { v2.x, v2.y }, pixel, barycentrics))
-					{
-
-						//Corrected Depth interpolation
-						const float w0{ barycentrics.x / v0.z };
-						const float w1{ barycentrics.y / v1.z };
-						const float w2{ barycentrics.z / v2.z };
-
-						float zBufferValue{ 1 / (w0 + w1 + w2) };
-
-						if (zBufferValue >= 0 && zBufferValue <= 1 && zBufferValue < depthBufferPixels[pixelNr])
-						{
-							depthBufferPixels[pixelNr] = zBufferValue;
-
-							const float newW0{ barycentrics.x / v0.w };
-							const float newW1{ barycentrics.y / v1.w };
-							const float newW2{ barycentrics.z / v2.w };
-
-							const float wInterpolated{ 1 / (newW0 + newW1 + newW2) };
-
-							//correctedUV
-							const Vector2 uv0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].uv / v0.w) };
-							const Vector2 uv1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].uv / v1.w) };
-							const Vector2 uv2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].uv / v2.w) };
-							const Vector2 interpolatedUV{ (uv0 + uv1 + uv2) * wInterpolated };
-
-							if (interpolatedUV.x >= 0 && interpolatedUV.x <= 1 && interpolatedUV.y >= 0 && interpolatedUV.y <= 1)
-							{
-								finalColor = m_pTexture->Sample(interpolatedUV);
-								//finalColor = {zBufferValue, zBufferValue, zBufferValue};
-
-
-								//Update Color in Buffer
-								finalColor.MaxToOne();
-
-								m_pBackBufferPixels[pixelNr] = SDL_MapRGB(m_pBackBuffer->format,
-									static_cast<uint8_t>(finalColor.r * 255),
-									static_cast<uint8_t>(finalColor.g * 255),
-									static_cast<uint8_t>(finalColor.b * 255));
-							}
-
-						}
-					}
-				}
-			}
-		}
-		delete[] depthBufferPixels;
-	}
+	RenderMeshes(meshesWorld);
 }
 
-void Renderer::Render_W3_Part2()const
+void Renderer::Render_W3_Part2()
 {
 	//Define Triangle List
+		//InitMeshes
 	std::vector<Mesh> meshesWorld{};
 
 	std::vector<Vertex> meshVetrices{};
 	std::vector<uint32_t> meshIndices{};
 	Utils::ParseOBJ("Resources/tuktuk.obj", meshVetrices, meshIndices);
+	meshesWorld.push_back(Mesh{ {meshVetrices}, meshIndices, PrimitiveTopology::TriangleList });
 
+	meshesWorld[0].worldMatrix = Matrix::CreateRotationY(m_MeshRotationAngle);
+	RenderMeshes(meshesWorld);
+}
 
-	meshesWorld.push_back(Mesh{ {meshVetrices}, meshIndices });
-	//meshesWorld.push_back{ Mesh{meshVetrices, meshIndices} };
+void Renderer::Render_W4_Part1()
+{
 
-	for (Mesh& mesh : meshesWorld)
-	{
-		VertexTransformationFunction(mesh);
-		//Rasterize logic
-		std::vector<Vector2> vetrices_screenSpace{};
-		float* depthBufferPixels{ new float[m_Width * m_Height] };
-
-		for (int i{ 0 }; i < m_Width * m_Height; ++i)
-		{
-			depthBufferPixels[i] = FLT_MAX;
-			m_pBackBufferPixels[i] = 0;
-		}
-
-		//Convert to ScreenSpace
-		for (const Vertex_Out& v : mesh.vertices_out)
-		{
-			vetrices_screenSpace.push_back(ToScreenSpace(v.position.x, v.position.y));
-		}
-
-
-
-		int incrementIndex{ 1 };
-		size_t maxSize{ mesh.indices.size() };
-
-		switch (mesh.primitiveTopology)
-		{
-		case PrimitiveTopology::TriangleList:
-			incrementIndex = 3;
-			break;
-		case PrimitiveTopology::TriangleStrip:
-			maxSize -= 2;
-			break;
-		}
-
-		//for (int triangleNr{ 0 }; triangleNr < meshesWorld[0].vertices_out.size(); triangleNr += 3)
-		for (int index{ 0 }; index < maxSize; index += incrementIndex)
-		{
-			const Vector4 v0
-			{
-				vetrices_screenSpace[mesh.indices[index]].x,
-				vetrices_screenSpace[mesh.indices[index]].y,
-				mesh.vertices_out[mesh.indices[index]].position.z,
-				mesh.vertices_out[mesh.indices[index]].position.w
-			};
-
-			const Vector4 v1
-			{
-				vetrices_screenSpace[mesh.indices[index + 1]].x,
-				vetrices_screenSpace[mesh.indices[index + 1]].y,
-				mesh.vertices_out[mesh.indices[index + 1]].position.z,
-				mesh.vertices_out[mesh.indices[index + 1]].position.w
-			};
-
-			const Vector4 v2
-			{
-				vetrices_screenSpace[mesh.indices[index + 2]].x,
-				vetrices_screenSpace[mesh.indices[index + 2]].y,
-				mesh.vertices_out[mesh.indices[index + 2]].position.z,
-				mesh.vertices_out[mesh.indices[index + 2]].position.w
-			};
-
-
-
-			//Define triangle bounding box
-			Vector2 topLeft
-			{
-				std::min<float>(v0.x, std::min(v1.x, v2.x)),
-				std::max<float>(v0.y, std::max(v1.y, v2.y))
-			};
-
-			Vector2 bottomRight
-			{
-				std::max<float>(v0.x, std::max(v1.x, v2.x)),
-				std::min<float>(v0.y, std::min(v1.y, v2.y))
-			};
-
-
-			if ((topLeft.x < 0 || bottomRight.x > m_Width - 1) || (bottomRight.y < 0 || topLeft.y > m_Height - 1)) continue;
-
-
-
-			//RENDER LOGIC
-			for (int px{ static_cast<int>(topLeft.x) }; px < static_cast<int>(bottomRight.x); ++px)
-			{
-				for (int py{ static_cast<int>(bottomRight.y) }; py < static_cast<int>(topLeft.y); ++py)
-				{
-
-					const int pixelNr{ px + (m_Width * py) };
-					const Vector2 pixel
-					{
-						px + 0.5f,
-						py + 0.5f
-					};
-
-					ColorRGB finalColor{};
-					Vector3 barycentrics{};
-					if (HitTest_Triangle({ v0.x, v0.y }, { v1.x, v1.y }, { v2.x, v2.y }, pixel, barycentrics))
-					{
-
-						//Corrected Depth interpolation
-						const float w0{ barycentrics.x / v0.z };
-						const float w1{ barycentrics.y / v1.z };
-						const float w2{ barycentrics.z / v2.z };
-
-						float zBufferValue{ 1 / (w0 + w1 + w2) };
-
-						if (zBufferValue >= 0 && zBufferValue <= 1 && zBufferValue < depthBufferPixels[pixelNr])
-						{
-							depthBufferPixels[pixelNr] = zBufferValue;
-
-							const float newW0{ barycentrics.x / v0.w };
-							const float newW1{ barycentrics.y / v1.w };
-							const float newW2{ barycentrics.z / v2.w };
-
-							const float wInterpolated{ 1 / (newW0 + newW1 + newW2) };
-
-							//correctedUV
-							const Vector2 uv0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].uv / v0.w) };
-							const Vector2 uv1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].uv / v1.w) };
-							const Vector2 uv2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].uv / v2.w) };
-							const Vector2 interpolatedUV{ (uv0 + uv1 + uv2) * wInterpolated };
-
-							if (interpolatedUV.x >= 0 && interpolatedUV.x <= 1 && interpolatedUV.y >= 0 && interpolatedUV.y <= 1)
-							{
-								finalColor = m_pTexture->Sample(interpolatedUV);
-								//finalColor = { zBufferValue, zBufferValue, zBufferValue };
-
-
-								//Update Color in Buffer
-								finalColor.MaxToOne();
-
-								m_pBackBufferPixels[pixelNr] = SDL_MapRGB(m_pBackBuffer->format,
-									static_cast<uint8_t>(finalColor.r * 255),
-									static_cast<uint8_t>(finalColor.g * 255),
-									static_cast<uint8_t>(finalColor.b * 255));
-							}
-
-						}
-					}
-				}
-			}
-		}
-		delete[] depthBufferPixels;
-	}
 }
