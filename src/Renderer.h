@@ -74,6 +74,8 @@ namespace dae
 		int m_Width{};
 		int m_Height{};
 
+		const ColorRGB m_AmbiantColor{ 0.3f, 0.3f, 0.3f };
+
 		//Inpute influenced variables
 		bool m_DisplayZBuffer{ false };
 		bool m_IsRotationEnabled{ false };
@@ -113,5 +115,11 @@ namespace dae
 		ColorRGB PixelShading(const Vertex_Out& vOut) const;
 
 		void Render_W4_Part1();
+
+
+
+
+		//Helper functions
+		void UpdateRotation(Timer* pTimer);
 	};
 }

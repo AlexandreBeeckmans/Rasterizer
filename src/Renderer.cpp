@@ -25,7 +25,6 @@ Renderer::Renderer(SDL_Window* pWindow) :
 	m_pBackBufferPixels = (uint32_t*)m_pBackBuffer->pixels;
 	m_pDepthBufferPixels = new float[m_Width * m_Height];
 
-
 	//Initialize Camera
 	m_Camera.Initialize(45.f, { .0f,5.0f,-64.f });
 	m_Camera.aspectRatio = static_cast<float>(m_Width) / m_Height;
@@ -36,13 +35,10 @@ Renderer::Renderer(SDL_Window* pWindow) :
 	m_pGlossyMap = Texture::LoadFromFile("Resources/vehicle_gloss.png");
 	m_pSpecularMap = Texture::LoadFromFile("Resources/vehicle_specular.png");
 
-
-
 	//Init shape
 	Utils::ParseOBJ("Resources/vehicle.obj", m_MeshVetrices, m_MeshIndices);
 	m_NonTransformedMeshes.push_back(Mesh{ {m_MeshVetrices}, m_MeshIndices, PrimitiveTopology::TriangleList });
 }
-
 Renderer::~Renderer()
 {
 	delete m_pTexture;
@@ -58,12 +54,15 @@ void Renderer::Update(Timer* pTimer)
 {
 	m_Camera.Update(pTimer);
 
+	UpdateRotation(pTimer);	
+}
+void Renderer::UpdateRotation(Timer* pTimer)
+{
 	//Update the rotation Angle
 	if (m_IsRotationEnabled)
 	{
 		m_MeshRotationAngle += m_MeshRotationSpeed * pTimer->GetElapsed();
 	}
-	
 }
 
 void Renderer::Render()
@@ -89,22 +88,26 @@ void Renderer::Render()
 //Vertex transformation
 void Renderer::VertexTransformationFunction(std::vector<Mesh>& meshVector) const
 {
+	//Calculate this matrix before the for loop to reduce the amount of operation inside of this loop
 	const Matrix viewProjectionMatrix{ m_Camera.viewMatrix * m_Camera.projectionMatrix };
 	for (Mesh& mesh : meshVector)
 	{
 		const Matrix worldViewProjectionMatrix{ mesh.worldMatrix *  viewProjectionMatrix };
 		for (const Vertex& vertex : mesh.vertices)
 		{
-
+			//New position with perspective division
 			Vector4 newPos{ worldViewProjectionMatrix.TransformPoint(vertex.position.ToVector4()) };
 			newPos.x /= newPos.w;
 			newPos.y /= newPos.w;
 			newPos.z /= newPos.w;
 
+			//We calculate the transformed other elements of the mesh
 			const Vector3 newNormal{ mesh.worldMatrix.TransformVector(vertex.normal).Normalized()};
 			const Vector3 newTangent{ mesh.worldMatrix.TransformVector(vertex.tangent).Normalized()};
 			Vector3 newViewDirection{ newPos.GetXYZ() - m_Camera.origin};
 			newViewDirection.Normalize();
+
+			//All the elements are added to the Vertices_Out vector
 			mesh.vertices_out.emplace_back(Vertex_Out{ newPos, vertex.color, vertex.uv, newNormal, newTangent, newViewDirection });
 		}
 	}
@@ -112,18 +115,23 @@ void Renderer::VertexTransformationFunction(std::vector<Mesh>& meshVector) const
 
 void Renderer::ToggleDisplayZBuffer()
 {
+	//Invert displaying of ZBuffer
 	m_DisplayZBuffer = !m_DisplayZBuffer;
 }
 void Renderer::ToggleRotation()
 {
+	//Enable / Disable Rotation
 	m_IsRotationEnabled = !m_IsRotationEnabled;
 }
 void Renderer::ToggleNormalMap()
 {
+	//Display / Hide normal map
 	m_DisplayNormalMap = !m_DisplayNormalMap;
 }
 void Renderer::CycleShadingMode()
 {
+	//Change Shading mode
+
 	switch (m_ShadingMode)
 	{
 	case ShadingMode::ObservedArea:
@@ -147,29 +155,32 @@ bool Renderer::SaveBufferToImage() const
 }
 bool Renderer::HitTest_Triangle(const Vector2& vertex0, const Vector2& vertex1, const Vector2& vertex2, const Vector2& pixel, Vector3& barycentricWeights) const
 {
+	//Caculate vertices to pixel
 	const Vector2 v0{ vertex0, pixel };
 	const Vector2 v1{ vertex1, pixel };
 	const Vector2 v2{ vertex2, pixel };
 
+	//Calculate edges
 	const Vector2 s0{ vertex0, vertex1 };
 	const Vector2 s1{ vertex1, vertex2 };
 	const Vector2 s2{ vertex2, vertex0 };
 
-
+	//Parallelogram areas
 	const float c0{ Vector2::Cross(s1, v1) };
 	const float c1{ Vector2::Cross(s2, v2) };
 	const float c2{ Vector2::Cross(s0, v0) };
 
+	//We check if all the parallelograms area ae poitning the same direction
 	if ((c1 >= 0 && c2 >= 0 && c0 >= 0) || (c1 <= 0 && c2 <= 0 && c0 <= 0))
 	{
-		const float triangleArea{ Vector2::Cross(s2, s0) };
+		//calculate triangle areas
+		const float triangleArea{ Vector2::Cross(s0, -s2) };
 		if (triangleArea == 0) return false;
 
-
+		//Calculate barycentrics weights
 		barycentricWeights.x = c0 / triangleArea;
 		barycentricWeights.y = c1 / triangleArea;
 		barycentricWeights.z = c2 / triangleArea;
-
 		return true;
 	}
 	return false;
@@ -187,6 +198,7 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 	ColorRGB finalColor{};
 	Vector3 barycentrics{};
 
+	//Check if the pixel hits a number + attribute the barycentric weights
 	if (HitTest_Triangle({ v0.x, v0.y }, { v1.x, v1.y }, { v2.x, v2.y }, pixel, barycentrics))
 	{
 
@@ -197,28 +209,29 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 
 		float zBufferValue{ 1 / (z0 + z1 + z2) };
 
+		//Check if we can use this buffer value
 		if (zBufferValue < 0 || zBufferValue > 1 || zBufferValue >= m_pDepthBufferPixels[pixelNr]) return;
 
-
+		//W value
 		const float w0{ barycentrics.x / v0.w };
 		const float w1{ barycentrics.y / v1.w };
 		const float w2{ barycentrics.z / v2.w };
-
 		const float wInterpolated{ 1 / (w0 + w1 + w2) };
 
-		//correctedUV
+		//interpolated UV
 		const Vector2 uv0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].uv / v0.w) };
 		const Vector2 uv1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].uv / v1.w) };
 		const Vector2 uv2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].uv / v2.w) };
 		const Vector2 interpolatedUV{ (uv0 + uv1 + uv2) * wInterpolated };
 
+		//If uv value outside of the uv map, we display nothing
 		if (interpolatedUV.x < 0 || interpolatedUV.x > 1 || interpolatedUV.y < 0 || interpolatedUV.y > 1) return;
+
+		//takes really long
+		m_pDepthBufferPixels[pixelNr] = zBufferValue;
 
 		if (!m_DisplayZBuffer)
 		{
-			//takes really long
-			m_pDepthBufferPixels[pixelNr] = zBufferValue;
-
 			//calculate interpolated normal
 			const Vector3 n0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].normal) };
 			const Vector3 n1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].normal) };
@@ -237,9 +250,8 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 			const Vector3 view2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].viewDirection) };
 			const Vector3 interpolatedViewDirection{ (view0 + view1 + view2).Normalized() };
 			
-
+			//Get the color value from the texture map
 			finalColor = m_pTexture->Sample(interpolatedUV);
-			
 			
 			//Create a new vertex out with all the interpolated value
 			Vertex_Out interpolatedVertex
@@ -251,14 +263,16 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 				interpolatedTangent,
 				interpolatedViewDirection
 			};
+
+			//Shade the pixel
 			finalColor = PixelShading(interpolatedVertex);
 		}
 		else
 		{
-			const float mappedValue{ Remap(zBufferValue,0.8f, 1.0f) };
-			finalColor = { mappedValue, mappedValue, mappedValue };
+			//Display Z buffer values
+			const float mappedValue{ Remap(zBufferValue,0.985f, 1.0f) };
+			finalColor = ColorRGB{ mappedValue,mappedValue,mappedValue };
 		}	
-
 
 		//Update Color in Buffer
 		finalColor.MaxToOne();
@@ -271,30 +285,27 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 }
 void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
 {
-	//slows a lot
+	//Reinit buffer values
+	std::fill_n(m_pDepthBufferPixels, m_Width * m_Height, FLT_MAX);
+	std::fill_n(m_pBackBufferPixels, m_Width * m_Height, SDL_MapRGB(m_pBackBuffer->format,
+		static_cast<uint8_t>(m_AmbiantColor.r * 255),
+		static_cast<uint8_t>(m_AmbiantColor.g * 255),
+		static_cast<uint8_t>(m_AmbiantColor.b * 255)));
+
+	//slows a lot (find a faster way ?)
 	VertexTransformationFunction(meshesWorld);
 
 	for (const Mesh& mesh : meshesWorld)
 	{
-
-		//Rasterize logic
+		//Convert vertices to ScreenSpace
 		std::vector<Vector2> vetrices_screenSpace{};
-		//m_pDepthBufferPixels = new float[m_Width * m_Height];
-
-		std::fill_n(m_pDepthBufferPixels, m_Width * m_Height, FLT_MAX);
-		std::fill_n(m_pBackBufferPixels, m_Width * m_Height, SDL_MapRGB(m_pBackBuffer->format,
-			static_cast<uint8_t>(100),
-			static_cast<uint8_t>(100),
-			static_cast<uint8_t>(100)));
-
-		//Convert to ScreenSpace
 		for (const Vertex_Out& v : mesh.vertices_out)
 		{
 			vetrices_screenSpace.push_back(ToScreenSpace(v.position.x, v.position.y));
 		}
 
 
-
+		//Determine how we will iterate through the for loop dending of the mesh topology
 		int incrementIndex{ 1 };
 		size_t maxSize{ mesh.indices.size() };
 
@@ -310,6 +321,7 @@ void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
 
 		for (int index{ 0 }; index < maxSize; index += incrementIndex)
 		{
+			//Calculate the value of the three vetrices
 			const Vector4 v0
 			{
 				vetrices_screenSpace[mesh.indices[index]].x,
@@ -347,7 +359,8 @@ void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
 				std::min<float>(v0.y, std::min(v1.y, v2.y))
 			};
 
-			if ((topLeft.x <= 0 || bottomRight.x > m_Width - 1) || (bottomRight.y <= 0 || topLeft.y > m_Height - 1)) continue;
+			//If bounding box outise of the screen --> we don't display the triangle
+			if ((topLeft.x <= 0 || bottomRight.x > m_Width) || (bottomRight.y <= 0 || topLeft.y > m_Height)) continue;
 
 			//RENDER LOGIC
 			for (int px{ static_cast<int>(topLeft.x) - 1 }; px < static_cast<int>(bottomRight.x + 1); ++px)
@@ -368,7 +381,6 @@ Vector2 Renderer::ToScreenSpace(const float x, const float y) const
 
 	return{ newX, newY };
 }
-
 float Renderer::Remap(const float value, const float min, const float max) const
 {
 	if (max <= min || value > max || value < min) return 0;
@@ -381,6 +393,7 @@ float Renderer::Remap(const float value, const float min, const float max) const
 	return differenceProportion;
 
 }
+
 ColorRGB Renderer::PixelShading(const Vertex_Out& vOut) const
 {
 	const Vector3 lightDirection{ 0.577f, -0.577f, 0.577f };
@@ -403,13 +416,16 @@ ColorRGB Renderer::PixelShading(const Vertex_Out& vOut) const
 								vOut.normal;
 
 	//OA
+	// **************
 	const float observedArea{ Vector3::Dot(-lightDirection, finalNormal) };
 
 	//Diffuse
+	// **************
 	const float kd{ 2.0f };
 	const ColorRGB diffuseColor{ vOut.color * kd  };
 
 	//Phong
+	// **************
 	//calculate glossy
 	ColorRGB glossyValue = m_pGlossyMap->Sample(vOut.uv);
 	const float glossiness{ 25.0f };
@@ -420,10 +436,8 @@ ColorRGB Renderer::PixelShading(const Vertex_Out& vOut) const
 
 	const Vector3 reflect{ Vector3::Reflect(-lightDirection, finalNormal)};
 
-	float cosinus{ Vector3::Dot(reflect, vOut.viewDirection) };
-
-	//Posiitve the value of cosinus to avoid big black zones
-	cosinus = std::abs(cosinus);
+	//If cosinue is lower than zero we take a 0 value
+	float cosinus{ std::max(0.0f,Vector3::Dot(reflect, vOut.viewDirection)) };
 
 	ColorRGB specularReflection
 	{ 
@@ -433,20 +447,9 @@ ColorRGB Renderer::PixelShading(const Vertex_Out& vOut) const
 	};
 
 	//avoid negative value for specular reflection
-	if (specularReflection.r < 0)
-	{
-		specularReflection.r = 0;
-	}
-
-	if (specularReflection.g < 0)
-	{
-		specularReflection.g = 0;
-	}
-
-	if (specularReflection.b < 0)
-	{
-		specularReflection.b = 0;
-	}
+	specularReflection.r = std::max(0.0f, specularReflection.r);
+	specularReflection.g = std::max(0.0f, specularReflection.g);
+	specularReflection.b = std::max(0.0f, specularReflection.b);
 
 	if (observedArea > 0)
 	{
