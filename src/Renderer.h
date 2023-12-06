@@ -4,9 +4,11 @@
 #include <vector>
 
 #include "Camera.h"
+#include "DataTypes.h"
 
 struct SDL_Window;
 struct SDL_Surface;
+
 
 namespace dae
 {
@@ -15,6 +17,16 @@ namespace dae
 	struct Vertex;
 	class Timer;
 	class Scene;
+	//struct Vector_Out;
+
+
+	enum struct ShadingMode
+	{
+		ObservedArea,
+		Diffuse,
+		Specular,
+		Combined
+	};
 
 	class Renderer final
 	{
@@ -35,6 +47,9 @@ namespace dae
 		void VertexTransformationFunction(const std::vector<Vertex>& vertices_in, std::vector<Vertex>& vertices_out) const;
 		void VertexTransformationFunction(std::vector<Mesh>& mesh) const;
 		void ToggleDisplayZBuffer();
+		void ToggleRotation();
+		void ToggleNormalMap();
+		void CycleShadingMode();
 
 	private:
 		SDL_Window* m_pWindow{};
@@ -42,18 +57,37 @@ namespace dae
 		SDL_Surface* m_pFrontBuffer{ nullptr };
 		SDL_Surface* m_pBackBuffer{ nullptr };
 		uint32_t* m_pBackBufferPixels{};
-		float* m_pDepthBufferPixels{nullptr};
+		float* m_pDepthBufferPixels{};
 
-		Camera m_Camera{ {0,0,-10}, 60 };
+		Camera m_Camera{ {0,0,0}, 45 };
 
 		Texture* m_pTexture;
+		Texture* m_pNormalMap;
+		Texture* m_pGlossyMap;
+		Texture* m_pSpecularMap;
 
 		int m_Width{};
 		int m_Height{};
 
 		bool m_DisplayZBuffer{ false };
+		bool m_IsRotationEnabled{ false };
+		bool m_DisplayNormalMap{ false };
+		ShadingMode m_ShadingMode{ ShadingMode::ObservedArea };
+
+
 		float m_MeshRotationAngle{ 0 };
-		const float m_MeshRotationSpeed{ 2 };
+		const float m_MeshRotationSpeed{ 0.5f };
+		const Vector3 m_MeshPosition{ 0,0,50.0f };
+
+		std::vector<uint32_t> m_PixelIndices{};
+
+
+
+		std::vector<Mesh> m_MeshesWorld{};
+		std::vector<Mesh> m_NonTransformedMeshes{};
+
+		std::vector<Vertex> m_MeshVetrices{};
+		std::vector<uint32_t> m_MeshIndices{};
 
 
 		bool HitTest_Triangle(const std::vector<Vector2>& triangle, const Vector2& pixel, Vector3& barycentricWeights, const int triangleNr) const;
@@ -67,6 +101,7 @@ namespace dae
 		std::vector<Vertex> MeshToVetrices(const Mesh& mesh) const;
 
 		float Remap(const float colorValue, const float min, const float max) const;
+		ColorRGB PixelShading(const Vertex_Out& vOut) const;
 
 
 		void Render_W1_Part1() const;

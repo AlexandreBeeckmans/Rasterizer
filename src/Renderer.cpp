@@ -9,6 +9,8 @@
 #include "Utils.h"
 #include "Camera.h"
 
+#include<execution>
+
 using namespace dae;
 
 Renderer::Renderer(SDL_Window* pWindow) :
@@ -21,30 +23,50 @@ Renderer::Renderer(SDL_Window* pWindow) :
 	m_pFrontBuffer = SDL_GetWindowSurface(pWindow);
 	m_pBackBuffer = SDL_CreateRGBSurface(0, m_Width, m_Height, 32, 0, 0, 0, 0);
 	m_pBackBufferPixels = (uint32_t*)m_pBackBuffer->pixels;
+	m_pDepthBufferPixels = new float[m_Width * m_Height];
 
-	//m_pDepthBufferPixels = new float[m_Width * m_Height];
 
 	//Initialize Camera
-	m_Camera.Initialize(60.f, { .0f,.0f,-10.f });
+	m_Camera.Initialize(45.f, { .0f,5.0f,-64.f });
 	m_Camera.aspectRatio = static_cast<float>(m_Width) / m_Height;
-	m_Camera.CalculateViewMatrix();
-	m_Camera.CalculateProjectionMatrix();
 
 	//InitTexture
 	//m_pTexture = Texture::LoadFromFile("Resources/uv_grid_2.png");
-	m_pTexture = Texture::LoadFromFile("Resources/tuktuk.png");
+	/*m_pTexture = Texture::LoadFromFile("Resources/tuktuk.png");*/
+
+	m_pTexture = Texture::LoadFromFile("Resources/vehicle_diffuse.png");
+	m_pNormalMap = Texture::LoadFromFile("Resources/vehicle_normal.png");
+	m_pGlossyMap = Texture::LoadFromFile("Resources/vehicle_gloss.png");
+	m_pSpecularMap = Texture::LoadFromFile("Resources/vehicle_specular.png");
+
+
+
+	//Init shape
+	Utils::ParseOBJ("Resources/vehicle.obj", m_MeshVetrices, m_MeshIndices);
+	m_NonTransformedMeshes.push_back(Mesh{ {m_MeshVetrices}, m_MeshIndices, PrimitiveTopology::TriangleList });
 }
 
 Renderer::~Renderer()
 {
 	delete m_pTexture;
+	delete m_pNormalMap;
+
+	delete m_pGlossyMap;
+	delete m_pSpecularMap;
+
+	delete[] m_pDepthBufferPixels;
 }
 
 void Renderer::Update(Timer* pTimer)
 {
 	m_Camera.Update(pTimer);
 
-	m_MeshRotationAngle += m_MeshRotationSpeed * pTimer->GetElapsed();
+	//Update the rotation Angle
+	if (m_IsRotationEnabled)
+	{
+		m_MeshRotationAngle += m_MeshRotationSpeed * pTimer->GetElapsed();
+	}
+	
 }
 
 void Renderer::Render()
@@ -54,16 +76,17 @@ void Renderer::Render()
 	SDL_LockSurface(m_pBackBuffer);
 
 	//Functions
-	//Render_W1_Part1(); //Rasyerizer stage only
+	//Render_W1_Part1(); //Rasterizer stage only
 	//Render_W1_Part2();
 	//Render_W1_Part3();
-	/*Render_W1_Part4();*/
+	//Render_W1_Part4();
 	//Render_W1_Part5();
 	//Render_W2_Part1();
 	//Render_W2_Part2();
 	//Render_W2_Part3();
 	//Render_W3_Part1();
-	Render_W3_Part2();
+	//Render_W3_Part2();
+	//Render_W4_Part1();
 
 	//@END
 	//Update SDL Surface
@@ -72,12 +95,13 @@ void Renderer::Render()
 	SDL_UpdateWindowSurface(m_pWindow);
 }
 
-
+//Vertex transformation
 void Renderer::VertexTransformationFunction(std::vector<Mesh>& meshVector) const
 {
+	const Matrix viewProjectionMatrix{ m_Camera.viewMatrix * m_Camera.projectionMatrix };
 	for (Mesh& mesh : meshVector)
 	{
-		const Matrix worldViewProjectionMatrix{ mesh.worldMatrix * m_Camera.viewMatrix * m_Camera.projectionMatrix };
+		const Matrix worldViewProjectionMatrix{ mesh.worldMatrix *  viewProjectionMatrix };
 		for (const Vertex& vertex : mesh.vertices)
 		{
 
@@ -85,14 +109,15 @@ void Renderer::VertexTransformationFunction(std::vector<Mesh>& meshVector) const
 			newPos.x /= newPos.w;
 			newPos.y /= newPos.w;
 			newPos.z /= newPos.w;
-			Vertex_Out newVertex{ newPos, vertex.color, vertex.uv };
-			mesh.vertices_out.emplace_back(newVertex);
+
+			const Vector3 newNormal{ mesh.worldMatrix.TransformVector(vertex.normal).Normalized()};
+			const Vector3 newTangent{ mesh.worldMatrix.TransformVector(vertex.tangent).Normalized()};
+			Vector3 newViewDirection{ newPos.GetXYZ() - m_Camera.origin};
+			newViewDirection.Normalize();
+			mesh.vertices_out.emplace_back(Vertex_Out{ newPos, vertex.color, vertex.uv, newNormal, newTangent, newViewDirection });
 		}
 	}
-
 }
-
-
 void Renderer::VertexTransformationFunction(const std::vector<Vertex>& vertices_in, std::vector<Vertex>& vertices_out) const
 {
 	//Todo > W1 Projection Stage
@@ -118,9 +143,36 @@ void Renderer::VertexTransformationFunction(const std::vector<Vertex>& vertices_
 		vertices_out.push_back(viewVertex);
 	}
 }
+
 void Renderer::ToggleDisplayZBuffer()
 {
 	m_DisplayZBuffer = !m_DisplayZBuffer;
+}
+void Renderer::ToggleRotation()
+{
+	m_IsRotationEnabled = !m_IsRotationEnabled;
+}
+void Renderer::ToggleNormalMap()
+{
+	m_DisplayNormalMap = !m_DisplayNormalMap;
+}
+void Renderer::CycleShadingMode()
+{
+	switch (m_ShadingMode)
+	{
+	case ShadingMode::ObservedArea:
+		m_ShadingMode = ShadingMode::Diffuse;
+		break;
+	case ShadingMode::Diffuse:
+		m_ShadingMode = ShadingMode::Specular;
+		break;
+	case ShadingMode::Specular:
+		m_ShadingMode = ShadingMode::Combined;
+		break;
+	case ShadingMode::Combined:
+		m_ShadingMode = ShadingMode::ObservedArea;
+		break;
+	}
 }
 
 bool Renderer::SaveBufferToImage() const
@@ -159,7 +211,6 @@ bool Renderer::HitTest_Triangle(const std::vector<Vector2>& triangle, const Vect
 	//}
 	//return false;
 }
-
 bool Renderer::HitTest_Triangle(const Vector2& vertex0, const Vector2& vertex1, const Vector2& vertex2, const Vector2& pixel, Vector3& barycentricWeights) const
 {
 	const Vector2 v0{ vertex0, pixel };
@@ -189,6 +240,7 @@ bool Renderer::HitTest_Triangle(const Vector2& vertex0, const Vector2& vertex1, 
 	}
 	return false;
 }
+
 void Renderer::RasterizeTriangle(const std::vector<Vertex>& vertices) const
 {
 	std::vector<Vector2> vetrices_screenSpace{};
@@ -290,6 +342,7 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 
 	ColorRGB finalColor{};
 	Vector3 barycentrics{};
+
 	if (HitTest_Triangle({ v0.x, v0.y }, { v1.x, v1.y }, { v2.x, v2.y }, pixel, barycentrics))
 	{
 
@@ -302,7 +355,6 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 
 		if (zBufferValue < 0 || zBufferValue > 1 || zBufferValue >= m_pDepthBufferPixels[pixelNr]) return;
 
-		m_pDepthBufferPixels[pixelNr] = zBufferValue;
 
 		const float w0{ barycentrics.x / v0.w };
 		const float w1{ barycentrics.y / v1.w };
@@ -320,14 +372,48 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 
 		if (!m_DisplayZBuffer)
 		{
+			//takes really long
+			m_pDepthBufferPixels[pixelNr] = zBufferValue;
+
+			//calculate interpolated normal
+			const Vector3 n0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].normal) };
+			const Vector3 n1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].normal) };
+			const Vector3 n2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].normal) };
+			const Vector3 interpolatedNormal{ (n0 + n1 + n2).Normalized() };
+
+			//calculate interpolated tangent
+			const Vector3 t0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].tangent) };
+			const Vector3 t1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].tangent) };
+			const Vector3 t2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].tangent) };
+			const Vector3 interpolatedTangent{ (t0 + t1 + t2).Normalized() };
+
+			//calculate interpolated viewDirection
+			const Vector3 view0{ barycentrics.x * (mesh.vertices_out[mesh.indices[index]].viewDirection) };
+			const Vector3 view1{ barycentrics.y * (mesh.vertices_out[mesh.indices[index + 1]].viewDirection) };
+			const Vector3 view2{ barycentrics.z * (mesh.vertices_out[mesh.indices[index + 2]].viewDirection) };
+			const Vector3 interpolatedViewDirection{ (view0 + view1 + view2).Normalized() };
+			
+
 			finalColor = m_pTexture->Sample(interpolatedUV);
+			
+			
+			//Create a new vertex out with all the interpolated value
+			Vertex_Out interpolatedVertex
+			{
+				Vector4{v0.x, v0.y, zBufferValue, wInterpolated},
+				finalColor,
+				interpolatedUV,
+				interpolatedNormal,
+				interpolatedTangent,
+				interpolatedViewDirection
+			};
+			finalColor = PixelShading(interpolatedVertex);
 		}
 		else
 		{
 			const float mappedValue{ Remap(zBufferValue,0.8f, 1.0f) };
 			finalColor = { mappedValue, mappedValue, mappedValue };
-		}
-		
+		}	
 
 
 		//Update Color in Buffer
@@ -341,6 +427,7 @@ void Renderer::RenderAPixel(const int px, const int py, const Vector4& v0, const
 }
 void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
 {
+	//slows a lot
 	VertexTransformationFunction(meshesWorld);
 
 	for (const Mesh& mesh : meshesWorld)
@@ -348,13 +435,13 @@ void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
 
 		//Rasterize logic
 		std::vector<Vector2> vetrices_screenSpace{};
-		m_pDepthBufferPixels = new float[m_Width * m_Height];
+		//m_pDepthBufferPixels = new float[m_Width * m_Height];
 
-		for (int i{ 0 }; i < m_Width * m_Height; ++i)
-		{
-			m_pDepthBufferPixels[i] = FLT_MAX;
-			m_pBackBufferPixels[i] = 0;
-		}
+		std::fill_n(m_pDepthBufferPixels, m_Width * m_Height, FLT_MAX);
+		std::fill_n(m_pBackBufferPixels, m_Width * m_Height, SDL_MapRGB(m_pBackBuffer->format,
+			static_cast<uint8_t>(100),
+			static_cast<uint8_t>(100),
+			static_cast<uint8_t>(100)));
 
 		//Convert to ScreenSpace
 		for (const Vertex_Out& v : mesh.vertices_out)
@@ -377,7 +464,6 @@ void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
 			break;
 		}
 
-		//for (int triangleNr{ 0 }; triangleNr < meshesWorld[0].vertices_out.size(); triangleNr += 3)
 		for (int index{ 0 }; index < maxSize; index += incrementIndex)
 		{
 			const Vector4 v0
@@ -404,37 +490,30 @@ void Renderer::RenderMeshes(std::vector<Mesh>& meshesWorld)
 				mesh.vertices_out[mesh.indices[index + 2]].position.w
 			};
 
-
-
 			//Define triangle bounding box
 			Vector2 topLeft
 			{
 				std::min<float>(v0.x, std::min(v1.x, v2.x)),
 				std::max<float>(v0.y, std::max(v1.y, v2.y))
 			};
-
+			
 			Vector2 bottomRight
 			{
 				std::max<float>(v0.x, std::max(v1.x, v2.x)),
 				std::min<float>(v0.y, std::min(v1.y, v2.y))
 			};
 
-
-			if ((topLeft.x < 0 || bottomRight.x > m_Width - 1) || (bottomRight.y < 0 || topLeft.y > m_Height - 1)) continue;
-
-
+			if ((topLeft.x <= 0 || bottomRight.x > m_Width - 1) || (bottomRight.y <= 0 || topLeft.y > m_Height - 1)) continue;
 
 			//RENDER LOGIC
-			for (int px{ static_cast<int>(topLeft.x) }; px < static_cast<int>(bottomRight.x); ++px)
+			for (int px{ static_cast<int>(topLeft.x) - 1 }; px < static_cast<int>(bottomRight.x + 1); ++px)
 			{
-				for (int py{ static_cast<int>(bottomRight.y) }; py < static_cast<int>(topLeft.y); ++py)
+				for (int py{ static_cast<int>(bottomRight.y) - 1 }; py < static_cast<int>(topLeft.y + 1); ++py)
 				{
 					RenderAPixel(px, py, v0, v1, v2, mesh, index);
 				}
 			}
 		}
-		delete[] m_pDepthBufferPixels;
-		m_pDepthBufferPixels = nullptr;
 	}
 }
 
@@ -502,6 +581,98 @@ float Renderer::Remap(const float value, const float min, const float max) const
 
 	return differenceProportion;
 
+}
+ColorRGB Renderer::PixelShading(const Vertex_Out& vOut) const
+{
+	const Vector3 lightDirection{ 0.577f, -0.577f, 0.577f };
+
+	//Tangent space axis
+	const Vector3 binormal = Vector3::Cross(vOut.normal, vOut.tangent);
+	const Matrix tangentSpaceAxis{ vOut.tangent, binormal, vOut.normal, Vector4{0,0,0,0} };
+
+	//sample the normal from normal map and place in interval [-1;1]
+	ColorRGB sampledNormal = m_pNormalMap->Sample(vOut.uv);
+	sampledNormal *= 2.0f;
+	sampledNormal.r -= 1.0f;
+	sampledNormal.g -= 1.0f;
+	sampledNormal.b -= 1.0f;
+
+	//Final normal value depends of the input of the player
+	const Vector3 finalNormal = m_DisplayNormalMap?
+								tangentSpaceAxis.TransformVector({ sampledNormal.r, sampledNormal.g, sampledNormal.b })
+								:
+								vOut.normal;
+
+	//OA
+	const float observedArea{ Vector3::Dot(-lightDirection, finalNormal) };
+
+	//Diffuse
+	const float kd{ 2.0f };
+	const ColorRGB diffuseColor{ vOut.color * kd  };
+
+	//Phong
+	//calculate glossy
+	ColorRGB glossyValue = m_pGlossyMap->Sample(vOut.uv);
+	const float glossiness{ 25.0f };
+	glossyValue *= glossiness;
+
+	//calculate specular
+	ColorRGB specularValue = m_pSpecularMap->Sample(vOut.uv);
+
+	const Vector3 reflect{ Vector3::Reflect(-lightDirection, finalNormal)};
+
+	float cosinus{ Vector3::Dot(reflect, vOut.viewDirection) };
+
+	//Return the value of cosinus to avoid big black zones
+	if (cosinus < 0) cosinus *= -1;
+
+	ColorRGB specularReflection
+	{ 
+		specularValue.r * powf(cosinus, glossyValue.r),
+		specularValue.g * powf(cosinus, glossyValue.r),
+		specularValue.b * powf(cosinus, glossyValue.r)
+	};
+
+	//avoid negative value for specular reflection
+	if (specularReflection.r < 0)
+	{
+		specularReflection.r = 0;
+	}
+
+	if (specularReflection.g < 0)
+	{
+		specularReflection.g = 0;
+	}
+
+	if (specularReflection.b < 0)
+	{
+		specularReflection.b = 0;
+	}
+
+	if (observedArea > 0)
+	{
+		switch (m_ShadingMode)
+		{
+		case ShadingMode::ObservedArea:
+			return{ observedArea, observedArea, observedArea };
+			break;
+			
+		case ShadingMode::Diffuse:
+			return diffuseColor * observedArea;
+			break;
+
+		case ShadingMode::Specular:
+			return specularReflection * observedArea;
+			break;
+
+		case ShadingMode::Combined:
+			const ColorRGB diffuseSpecularColor{ diffuseColor + specularReflection };
+			return diffuseSpecularColor * observedArea;
+			break;
+		}
+	}
+
+	return{ 0,0,0 };
 }
 
 
@@ -770,7 +941,6 @@ void Renderer::Render_W3_Part1()
 
 	RenderMeshes(meshesWorld);
 }
-
 void Renderer::Render_W3_Part2()
 {
 	//Define Triangle List
@@ -788,5 +958,17 @@ void Renderer::Render_W3_Part2()
 
 void Renderer::Render_W4_Part1()
 {
+	//Define Triangle List
+	//InitMeshes
 
+	m_MeshesWorld.clear();
+
+	//Find a more optimal solution ?
+	m_MeshesWorld = m_NonTransformedMeshes;
+	const Matrix meshTransformation{ Matrix::CreateRotationY(m_MeshRotationAngle) * Matrix::CreateTranslation(m_MeshPosition) };
+
+
+	m_MeshesWorld[0].worldMatrix = meshTransformation;
+
+	RenderMeshes(m_MeshesWorld);
 }
